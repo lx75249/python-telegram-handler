@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 import requests
 
 from telegram_handler.formatters import HtmlFormatter
@@ -26,6 +27,8 @@ class TelegramHandler(logging.Handler):
         super(TelegramHandler, self).__init__(level=level)
         self.setFormatter(HtmlFormatter())
 
+        self.worker = ThreadPoolExecutor(max_workers=2)
+
     @classmethod
     def format_url(cls, token, method):
         return 'https://api.telegram.org/bot%s/%s' % (token, method)
@@ -41,17 +44,20 @@ class TelegramHandler(logging.Handler):
             logger.exception('Something went terribly wrong while obtaining chat id')
             logger.debug(response)
 
-    def request(self, method, **kwargs):
+    def request(self, method, block=True, **kwargs):
         url = self.format_url(self.token, method)
 
         kwargs.setdefault('timeout', self.timeout)
 
         response = None
         try:
-            response = requests.post(url, **kwargs)
-            self.last_response = response
-            response.raise_for_status()
-            return response.json()
+            if block:
+                response = requests.post(url, **kwargs)
+                self.last_response = response
+                response.raise_for_status()
+                return response.json()
+            else:
+                self.worker.submit(requests.post, url, **kwargs)
         except:
             logger.exception('Error while making POST to %s', url)
             logger.debug(str(kwargs))
@@ -63,7 +69,7 @@ class TelegramHandler(logging.Handler):
     def send_message(self, text, **kwargs):
         data = {'text': text}
         data.update(kwargs)
-        return self.request('sendMessage', json=data)
+        return self.request('sendMessage', False, json=data)
 
     def emit(self, record):
         text = self.format(record)
